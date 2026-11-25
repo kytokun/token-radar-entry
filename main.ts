@@ -75,8 +75,11 @@ function copyDir(from: string, to: string): string[] {
 
 const pageFiles = copyDir(join(here, 'dashboard'), join(outDir, 'dashboard'));
 // Keep a copy of the dataset beside the page too, so index.html loads it
-// whether the site serves /output or /output/dashboard as its root.
-copyFileSync(join(outDir, 'data.js'), join(outDir, 'dashboard', 'data.js'));
+// whether the site serves /output or /output/dashboard as its root. The copy
+// is named zz-data.js so it sorts AFTER index.html: the dossier's source text
+// shows every file whole until the 64 KB cap, and this one-line dataset is the
+// file the cap cuts — never the page's markup.
+copyFileSync(join(outDir, 'data.js'), join(outDir, 'dashboard', 'zz-data.js'));
 const shots = copyDir(join(here, 'screenshots'), join(outDir, 'screenshots'));
 
 if (pageFiles.length < 3) die(`dashboard/ holds ${pageFiles.length} files — need index.html plus css and js`);

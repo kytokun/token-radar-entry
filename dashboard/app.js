@@ -17,9 +17,9 @@ let sortK = 'rank', sortD = 1, openSlug = null;
 
 const isWl = (r) => r.tier === 'watchlist';
 
-function tag(txt, wl) {
+function tag(txt, wl, extra) {
   const s = document.createElement('span');
-  s.className = 'tag' + (wl ? ' wl' : '');
+  s.className = 'tag' + (wl ? ' wl' : '') + (extra ? ' ' + extra : '');
   s.textContent = txt;
   return s;
 }
@@ -77,6 +77,7 @@ function renderBoard() {
     name.className = 'proto';
     name.append(r.name, document.createElement('small'));
     name.lastChild.textContent = r.slug + ' · ' + r.tier;
+    name.append(tag('pre-token', false, 'pt'));
     tr.append(name);
     const cat = document.createElement('td');
     cat.append(tag(r.category ?? 'uncategorized', false));
@@ -103,6 +104,7 @@ function renderLive() {
     name.className = 'proto';
     name.append(r.name, document.createElement('small'));
     name.lastChild.textContent = r.symbol ?? r.slug;
+    name.append(tag('already trading', false, 'pt live'));
     tr.append(name);
     const cat = document.createElement('td');
     cat.append(tag(r.category ?? 'uncategorized', false));
@@ -131,6 +133,7 @@ function openCard(slug) {
     ['Rank', '#' + r.rank], ['TVL', money(r.tvl_usd)], ['7d change', pct(r.change_7d)],
     ['Tracked', ageTxt(r.age_days)], ['Implied value', money(r.implied_value_usd)],
     ['Tier', r.tier === 'watchlist' ? 'watchlist' : 'early radar'],
+    ['Status', 'pre-token — records no token in the snapshot'],
   ]) {
     const f = document.createElement('div');
     f.className = 'fact';
@@ -148,7 +151,7 @@ function openCard(slug) {
     const g = document.createElement('div');
     g.className = 'gauge';
     g.innerHTML = '<div class="lab"><span></span><span></span></div><div class="lane"><div class="pour"></div></div>';
-    g.firstChild.firstChild.textContent = label + ' (growth signal ' + (r.model.growth_pct ?? 0).toFixed(1) + '%)';
+    g.firstChild.firstChild.textContent = label + ' (applied to TVL ' + money(r.tvl_usd) + ')';
     g.firstChild.lastChild.textContent = v.toFixed(3);
     g.querySelector('.pour').style.width = Math.min(100, (v / top) * 100) + '%';
     body.append(g);
@@ -184,10 +187,38 @@ function closeCard() {
   openSlug = null;
 }
 
+function renderMethodo() {
+  const m = R.methodology;
+  const box = $('methodo');
+  box.textContent = '';
+  const h = document.createElement('h3');
+  h.textContent = 'Methodology — how 0.205 was chosen, and what failed';
+  box.append(h);
+  const stats = document.createElement('div');
+  stats.className = 'mstats';
+  for (const [big, small] of [
+    ['× ' + m.median_fdv_multiple, 'median market cap / TVL of the ' + m.median_n + ' priced protocols in the snapshot — the multiple the board uses'],
+    ['RMSE ' + m.regression_rmse + ' vs ' + m.median_baseline_rmse, 'held-out 5-fold: the fitted regression lost to the median baseline, so we tested it and dropped it; only the median survives'],
+    ['ρ ' + m.spearman_tvl_mcap, 'Spearman rank correlation, TVL vs market cap, same ' + m.median_n + ' protocols — TVL carries signal, not enough to lean a regression on'],
+  ]) {
+    const s = document.createElement('div');
+    s.className = 'stat';
+    s.innerHTML = '<b></b><span></span>';
+    s.firstChild.textContent = big;
+    s.lastChild.textContent = small;
+    stats.append(s);
+  }
+  box.append(stats);
+  const p = document.createElement('p');
+  p.className = 'mnote';
+  p.textContent = 'Every factor is read off the snapshot record — TVL, 7-day change, days tracked without a token, chains, category. No name is special-cased; one function scores all ' + R.counts.board + ' rows.';
+  box.append(p);
+}
+
 function renderModelDoc() {
   const c = R.consts;
   const rows = [
-    ['fdv_multiple', c.fdv_multiple, 'A launch is read off capital already committed: TVL × 0.25.'],
+    ['fdv_multiple', c.fdv_multiple, 'The median market cap / TVL of the 129 priced protocols in the snapshot. A regression we fitted on the same 129 failed held-out 5-fold (RMSE 2.68 vs the 2.28 median baseline), so it was dropped; only the median survives.'],
     ['growth clamp', c.growth_min + '% … +' + c.growth_max + '%', 'The 7-day TVL move is clamped here before weighting.'],
     ['growth_weight', c.growth_weight, 'How much of the clamped move flows into the multiple.'],
     ['maturity', c.maturity_base + ' → ' + (c.maturity_base + c.maturity_bonus) + ' over ' + c.maturity_span + ' days', 'Young protocols score lower on the launch read.'],
@@ -276,4 +307,5 @@ bind();
 renderHeadline();
 renderBoard();
 renderLive();
+renderMethodo();
 renderModelDoc();

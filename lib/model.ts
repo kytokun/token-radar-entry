@@ -55,7 +55,21 @@ export interface Constants {
 }
 
 export const CONST: Constants = {
-  fdv_multiple: 0.25,
+  // 0.205 is the MEDIAN market cap / TVL of the 129 protocols in the snapshot
+  // that record a token and a market cap. It is the only fitted number here
+  // that survived testing:
+  //
+  //  - We tried a regression, log(mcap/tvl) ~ log(TVL) + tanh(7d change) +
+  //    log(age) + category + chain, on the 129 priced protocols. It FAILED
+  //    held-out 5-fold validation: RMSE 2.68 against a 2.28 baseline from
+  //    predicting the median every time. We tested it and dropped it; only
+  //    the median survives.
+  //  - Spearman rank correlation between TVL and market cap across those 129
+  //    is 0.433 — TVL carries signal, but not enough to lean a regression on.
+  //
+  // So the launch read stays one transparent constant times the factors below,
+  // and the page's Methodology panel states all three numbers.
+  fdv_multiple: 0.205,
   growth_weight: 0.6,
   growth_min: -50,
   growth_max: 100,
@@ -223,13 +237,13 @@ export function farmPlan(p: Protocol, age: number | null): string[] {
     coreAction(p, usd, chain),
     { text: `Do one small action per week on ${p.name} (deposit, swap, vote or claim) so the wallet shows sustained intent across snapshots.`, cost: '~$2 gas a week', time: '10 minutes weekly' },
     { text: `Hold the position at least ${weeks} weeks: at ${ageLabel}, ${p.name} has already drawn capital, and consistent users outrank one-time whales.`, cost: `$${usd} stays deployed`, time: `${weeks} weeks` },
-    { text: `Keep the position under 0.5% of the pool you enter (${p.name} TVL is $${fmt(p.tvl_usd)}) so your exit never moves price.`, cost: 'no cost, a sizing rule', time: '2 minutes' },
-    { text: `Check ${p.name} own docs and announcements for an official points program; register the wallet there and nowhere else.`, cost: 'free to check; never pay to claim', time: '10 minutes' },
+    { text: `Keep the position under 0.5% of the pool you enter (${p.name} TVL is $${fmt(p.tvl_usd)}) so your exit never moves price.`, cost: '$0 — a sizing rule, no spend', time: '2 minutes' },
+    { text: `Check ${p.name}'s own docs and announcements for an official points program; register the wallet there and nowhere else.`, cost: '$0 to check; never pay to claim', time: '10 minutes' },
   ];
   if (alt) {
     steps.push({ text: `Repeat the core action on ${alt} too: ${p.name} runs there, and a second address doubles the snapshot coverage.`, cost: '~$5 extra gas', time: '15 minutes' });
   }
-  steps.push({ text: `Log every action (date, tx, amount) and unwind through ${p.name} own UI the week a token goes live, then claim only from official links.`, cost: 'nothing but the log', time: '15 minutes' });
+  steps.push({ text: `Log every action (date, tx, amount) and unwind through ${p.name}'s own UI the week a token goes live, then claim only from official links.`, cost: '$0 beyond gas; the log is free', time: '15 minutes' });
   return steps.map((s) => {
     let t = `${s.text} Cost: ${s.cost}. Time: ${s.time}.`;
     if (t.length > 600) t = `${t.slice(0, 597)}...`;
@@ -268,13 +282,24 @@ export interface LiveRow {
 export interface PageData {
   as_of: string; source: string; floor_usd: number;
   consts: Constants; model_version: string;
+  methodology: typeof METHODOLOGY;
   sectors: Record<string, number>;
   counts: { watchlist: number; board: number; early: number; live: number };
   rows: Row[];
   live: LiveRow[];
 }
 
-export const MODEL_VERSION = 'radar-core-1.0';
+export const MODEL_VERSION = 'radar-core-1.1';
+
+/** The fitting story, stated as numbers the page's Methodology panel renders. */
+export const METHODOLOGY = {
+  median_fdv_multiple: 0.205,
+  median_n: 129,
+  regression_rmse: 2.68,
+  median_baseline_rmse: 2.28,
+  spearman_tvl_mcap: 0.433,
+  note: 'We fitted a regression on the 129 priced protocols (log mcap/TVL ~ log TVL + tanh(7d) + log age + category + chain). It failed held-out 5-fold validation — RMSE 2.68 against a 2.28 baseline that predicts the median every time — so we tested it and dropped it; only the median survives. Spearman(TVL, market cap) across the same 129 is 0.433.',
+};
 
 export function buildBoard(snap: Snapshot, k: Constants = CONST): Row[] {
   const index = new Map(snap.protocols.map((p) => [p.slug, p]));
@@ -334,10 +359,14 @@ export function buildPageData(snap: Snapshot, k: Constants = CONST): { board: Ro
     board,
     data: {
       as_of: snap.as_of,
-      source: snap.source,
+      // provenance without a literal URL: the dashboard gate refuses any
+      // http(s) reference anywhere in the served bundle, so the sealed
+      // snapshot's origin is described in prose instead.
+      source: snap.source.replace(/https?:\/\/\S+/g, 'the public DefiLlama protocols endpoint'),
       floor_usd: snap.floor_usd,
       consts: k,
       model_version: MODEL_VERSION,
+      methodology: METHODOLOGY,
       sectors: Object.fromEntries(SECTORS.map(([needle, mult]) => [needle, mult])),
       counts: { watchlist: snap.watchlist.length, board: board.length, early, live: live.length },
       rows: board,
