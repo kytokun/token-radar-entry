@@ -1,207 +1,249 @@
-// Pre-Token Radar page logic: reads window.RADAR (written by main.ts as data.js), renders the board,
-// the live-token view and the methodology, with sort, filter, search and a live model sandbox.
+// TokenRadar page logic. Reads window.RADAR (data.js, written by main.ts):
+// renders the ranked board, the live-token comparison and the model write-up,
+// with sort, filter, search and a per-protocol dossier card.
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const fmt$ = (n) => '$' + n.toLocaleString('en-US');
-const fmtM = (n) => (n >= 1e9 ? '$' + (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? '$' + (n / 1e6).toFixed(1) + 'M' : fmt$(n));
-const pct = (n) => (n === null || n === undefined) ? '—' : (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+const R = window.RADAR;
 
-const RADAR = window.RADAR;
-let model = { ...RADAR.model };
-let sortKey = 'rank', sortDir = 1, openSlug = null;
+const money = (n) =>
+  n >= 1e9 ? '$' + (n / 1e9).toFixed(2) + 'B'
+  : n >= 1e6 ? '$' + (n / 1e6).toFixed(1) + 'M'
+  : '$' + Math.round(n).toLocaleString('en-US');
+const pct = (n) => n === null || n === undefined ? '—' : (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+const ageTxt = (d) => d === null ? 'unknown' : Math.round(d / 30.44) + ' mo';
 
-function rescore(r) {
-  const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, r.change_7d ?? 0));
-  const growthMult = 1 + (growthPct / 100) * model.growth_weight;
-  const age = r.age_days ?? model.unknown_age_days;
-  const maturity = model.maturity_floor + (Math.min(Math.max(age, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
-  const chainMult = 1 + model.chain_weight * Math.min(Math.max(r.chains.length - 1, 0), model.chain_cap);
-  return Math.max(1, Math.round(r.tvl_usd * model.base_multiple * growthMult * maturity * chainMult * r.sector_multiplier));
+let sortK = 'rank', sortD = 1, openSlug = null;
+
+const isWl = (r) => r.tier === 'watchlist';
+
+function tag(txt, wl) {
+  const s = document.createElement('span');
+  s.className = 'tag' + (wl ? ' wl' : '');
+  s.textContent = txt;
+  return s;
 }
 
-function chip(text) { const s = document.createElement('span'); s.className = 'chip'; s.textContent = text; return s; }
-
-function renderMeta() {
-  $('meta').innerHTML =
-    `Snapshot <b>${RADAR.as_of}</b> · floor <b>${fmtM(RADAR.floor_usd)}</b><br>` +
-    `<b>${RADAR.watchlist_size}</b> watchlist · <b>${RADAR.board_size}</b> ranked · <b>${RADAR.early_size}</b> early · <b>${RADAR.live_size}</b> live`;
-  $('mversion').textContent = RADAR.model_version;
-  $('mformula').textContent = `implied = TVL × ${model.base_multiple} × growth × maturity × chains × sector`;
-  $('f-asof').textContent = RADAR.as_of;
+function td(txt, cls) {
+  const d = document.createElement('td');
+  d.textContent = txt;
+  if (cls) d.className = cls;
+  return d;
 }
 
-function renderRows() {
-  const q = $('q').value.trim().toLowerCase();
-  const cat = $('f-cat').value, chain = $('f-chain').value, watch = $('f-watch').value;
-  let rows = RADAR.rows.filter((r) => {
+function renderHeadline() {
+  $('headline').innerHTML =
+    `Snapshot <b>${R.as_of}</b> · floor <b>${money(R.floor_usd)}</b><br>` +
+    `<b>${R.counts.watchlist}</b> watchlist · <b>${R.counts.early}</b> early · <b>${R.counts.live}</b> live set aside`;
+  $('strip-version').textContent = R.model_version;
+  $('strip-formula').textContent = 'implied = TVL × ' + R.consts.fdv_multiple +
+    ' × growth × maturity × chain × sector';
+  $('strip-asof').textContent = 'floor $' + Math.round(R.floor_usd / 1e6) + 'M TVL · ' + R.counts.board + ' ranked';
+  $('g-asof').textContent = R.as_of;
+}
+
+function visibleRows() {
+  const q = $('search').value.trim().toLowerCase();
+  const cat = $('pick-cat').value, chain = $('pick-chain').value, tier = $('pick-tier').value;
+  const out = R.rows.filter((r) => {
     if (cat && r.category !== cat) return false;
     if (chain && !r.chains.includes(chain)) return false;
-    if (watch === 'watch' && !isWatchlist(r)) return false;
-    if (watch === 'early' && isWatchlist(r)) return false;
-    if (q && !(r.name.toLowerCase().includes(q) || r.slug.includes(q) || r.chains.join(' ').toLowerCase().includes(q))) return false;
+    if (tier && r.tier !== tier) return false;
+    if (q) {
+      const hay = (r.name + ' ' + r.slug + ' ' + (r.category ?? '') + ' ' + r.chains.join(' ')).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
   });
-  const useModel = sortKey === 'implied_value_usd' && sandboxOn();
-  const keyed = rows.map((r) => ({ r, iv: useModel ? rescore(r) : r.implied_value_usd }));
-  keyed.sort((a, b) => {
-    const ka = sortKey === 'implied_value_usd' ? a.iv : a.r[sortKey], kb = sortKey === 'implied_value_usd' ? b.iv : b.r[sortKey];
-    return ((ka ?? -1) < (kb ?? -1) ? -1 : (ka ?? -1) > (kb ?? -1) ? 1 : a.r.rank - b.r.rank) * sortDir;
-  });
-  const tbody = $('rows'); tbody.textContent = '';
-  for (const { r, iv } of keyed.slice(0, 400)) {
-    const tr = document.createElement('tr');
-    if (isWatchlist(r)) tr.className = 'watchlist';
-    tr.dataset.slug = r.slug;
-    const nameTd = document.createElement('td'); nameTd.className = 'proto';
-    nameTd.append(r.name, document.createElement('small'));
-    nameTd.querySelector('small').textContent = r.slug + (isWatchlist(r) ? ' · watchlist' : ' · early');
-    const catTd = document.createElement('td'); catTd.append(chip(r.category ?? 'uncategorized'));
-    const chTd = document.createElement('td'); chTd.className = 'num';
-    chTd.textContent = (r.change_7d ?? 0) >= 0 ? '+' + (r.change_7d ?? 0).toFixed(1) + '%' : (r.change_7d ?? 0).toFixed(1) + '%';
-    chTd.className += (r.change_7d ?? 0) >= 0 ? ' up' : ' down';
-    const cells = [
-      String(useModel ? rankOf(iv, keyed) : r.rank),
-      nameTd, catTd,
-      fmtM(r.tvl_usd), chTd,
-      r.age_days === null ? 'unknown' : Math.round(r.age_days / 30) + ' mo',
-    ];
-    const first = document.createElement('td'); first.className = 'num'; first.textContent = cells[0]; tr.append(first);
-    tr.append(nameTd, catTd);
-    const tvlTd = document.createElement('td'); tvlTd.className = 'num'; tvlTd.textContent = fmtM(r.tvl_usd); tr.append(tvlTd);
-    tr.append(chTd);
-    const ageTd = document.createElement('td'); ageTd.className = 'num';
-    ageTd.textContent = r.age_days === null ? 'unknown' : Math.round(r.age_days / 30) + ' mo'; tr.append(ageTd);
-    const ivTd = document.createElement('td'); ivTd.className = 'num iv'; ivTd.textContent = fmtM(iv); tr.append(ivTd);
-    tr.addEventListener('click', () => openDetail(r.slug));
-    tbody.append(tr);
+  if (sortK !== 'rank') {
+    out.sort((a, b) => {
+      const ka = a[sortK] ?? -1, kb = b[sortK] ?? -1;
+      return ((ka < kb ? -1 : ka > kb ? 1 : a.rank - b.rank)) * sortD;
+    });
   }
-  $('count').textContent = `${keyed.length} of ${RADAR.board_size} protocols` + (useModel ? ' · rescored live' : '');
+  return out;
 }
 
-/** Watchlist membership: the board's first watchlist_size rows were the watchlist before the early fill,
-    but rank order mixes them — the honest test is the slug set main.ts ranked first, which it embeds
-    in the radar data as watchlist slugs are all present; mark early = below floor at score time. */
-function isWatchlist(r) { return r.tvl_usd >= RADAR.floor_usd; }
-
-function rankOf(iv, keyed) {
-  let n = 0;
-  for (const k of keyed) if (k.iv > iv) n++;
-  return n + 1;
-}
-
-function sandboxOn() {
-  return model.base_multiple !== RADAR.model.base_multiple || model.growth_weight !== RADAR.model.growth_weight || model.chain_weight !== RADAR.model.chain_weight;
+function renderBoard() {
+  const rows = visibleRows();
+  const body = $('board-body');
+  body.textContent = '';
+  for (const r of rows.slice(0, 500)) {
+    const tr = document.createElement('tr');
+    tr.className = 't-' + r.tier;
+    tr.dataset.slug = r.slug;
+    tr.append(td(String(r.rank), 'r'));
+    const name = document.createElement('td');
+    name.className = 'proto';
+    name.append(r.name, document.createElement('small'));
+    name.lastChild.textContent = r.slug + ' · ' + r.tier;
+    tr.append(name);
+    const cat = document.createElement('td');
+    cat.append(tag(r.category ?? 'uncategorized', false));
+    tr.append(cat);
+    tr.append(td(money(r.tvl_usd), 'r'));
+    const ch = td(pct(r.change_7d), 'r ' + ((r.change_7d ?? 0) >= 0 ? 'up' : 'down'));
+    tr.append(ch);
+    tr.append(td(ageTxt(r.age_days), 'r'));
+    tr.append(td(money(r.implied_value_usd), 'iv'));
+    tr.addEventListener('click', () => openCard(r.slug));
+    body.append(tr);
+  }
+  $('deck-count').textContent = rows.length + ' of ' + R.counts.board + ' protocols';
 }
 
 function renderLive() {
-  const tbody = $('liverows'); tbody.textContent = '';
-  for (const r of RADAR.live) {
+  const body = $('live-body');
+  body.textContent = '';
+  R.live.forEach((r, i) => {
     const tr = document.createElement('tr');
-    const nameTd = document.createElement('td'); nameTd.className = 'proto';
-    nameTd.append(r.name, document.createElement('small'));
-    nameTd.querySelector('small').textContent = (r.symbol ?? r.slug);
-    const catTd = document.createElement('td'); catTd.append(chip(r.category ?? 'uncategorized'));
-    const mt = r.mcap_usd && r.tvl_usd ? (r.mcap_usd / r.tvl_usd).toFixed(2) + 'x' : '—';
-    const cells = [nameTd, catTd, fmtM(r.tvl_usd), fmtM(r.mcap_usd ?? 0), mt, pct(r.change_7d)];
-    for (const [i, c] of cells.entries()) {
-      const td = c instanceof Node ? c : (() => { const td = document.createElement('td'); td.textContent = c; if (i >= 2) td.className = 'num'; return td; })();
-      if (c instanceof Node === false && c.startsWith('+')) td.className += ' up';
-      if (c instanceof Node === false && c.startsWith('-') && i === 5) td.className += ' down';
-      tr.append(td);
-    }
-    tbody.append(tr);
-  }
+    tr.style.cursor = 'default';
+    tr.append(td(String(i + 1), 'r'));
+    const name = document.createElement('td');
+    name.className = 'proto';
+    name.append(r.name, document.createElement('small'));
+    name.lastChild.textContent = r.symbol ?? r.slug;
+    tr.append(name);
+    const cat = document.createElement('td');
+    cat.append(tag(r.category ?? 'uncategorized', false));
+    tr.append(cat);
+    tr.append(td(money(r.tvl_usd), 'r'));
+    tr.append(td(money(r.mcap_usd ?? 0), 'r'));
+    tr.append(td(r.mcap_usd && r.tvl_usd ? (r.mcap_usd / r.tvl_usd).toFixed(2) + 'x' : '—', 'r'));
+    const ch = td(pct(r.change_7d), 'r ' + ((r.change_7d ?? 0) >= 0 ? 'up' : 'down'));
+    tr.append(ch);
+    body.append(tr);
+  });
 }
 
-function openDetail(slug) {
-  const r = RADAR.rows.find((x) => x.slug === slug);
+function openCard(slug) {
+  const r = R.rows.find((x) => x.slug === slug);
   if (!r) return;
   openSlug = slug;
-  $('d-name').textContent = r.name;
-  $('d-subline').textContent = `${r.slug} · ${r.category ?? 'uncategorized'} · ${r.chains.join(', ')}`;
-  const live = sandboxOn() ? rescore(r) : r.implied_value_usd;
-  $('d-body').innerHTML = '';
-  const facts = document.createElement('div'); facts.className = 'factrow';
-  for (const [label, val] of [['TVL', fmtM(r.tvl_usd)], ['7d change', pct(r.change_7d)], ['Age', r.age_days === null ? 'unknown' : Math.round(r.age_days / 30) + ' months'], ['Implied value', fmtM(live)], ['Status', isWatchlist(r) ? 'watchlist' : 'early (below floor)']]) {
-    const f = document.createElement('div'); f.className = 'fact';
-    f.innerHTML = `<span>${label}</span><b></b>`;
-    f.querySelector('b').textContent = val;
+  $('c-name').textContent = r.name;
+  $('c-line').textContent = r.slug + ' · ' + (r.category ?? 'uncategorized') + ' · ' + r.chains.join(', ');
+  const body = $('c-body');
+  body.textContent = '';
+
+  const facts = document.createElement('div');
+  facts.className = 'facts';
+  for (const [k, v] of [
+    ['Rank', '#' + r.rank], ['TVL', money(r.tvl_usd)], ['7d change', pct(r.change_7d)],
+    ['Tracked', ageTxt(r.age_days)], ['Implied value', money(r.implied_value_usd)],
+    ['Tier', r.tier === 'watchlist' ? 'watchlist' : 'early radar'],
+  ]) {
+    const f = document.createElement('div');
+    f.className = 'fact';
+    f.innerHTML = '<span></span><b></b>';
+    f.firstChild.textContent = k;
+    f.lastChild.textContent = v;
     facts.append(f);
   }
-  $('d-body').append(facts);
-  const bars = document.createElement('div'); bars.className = 'bar';
-  const parts = [['Growth ×', r.growth_multiplier, 2], ['Maturity ×', r.maturity_multiplier, 2], ['Chains ×', r.chain_multiplier, 2], ['Sector ×', r.sector_multiplier, 2]];
-  for (const [label, v] of parts) {
-    const lab = document.createElement('div'); lab.className = 'lab';
-    lab.innerHTML = `<span>${label}</span><span></span>`;
-    lab.lastChild.textContent = v.toFixed(2);
-    const track = document.createElement('div'); track.className = 'track';
-    const fill = document.createElement('div'); fill.className = 'fill';
-    fill.style.width = Math.min(100, (v / 2.5) * 100) + '%';
-    track.append(fill);
-    const bar = document.createElement('div'); bar.className = 'bar'; bar.append(lab, track);
-    $('d-body').append(bar);
+  body.append(facts);
+
+  for (const [label, v, top] of [
+    ['Growth ×', r.model.m_growth, 1.6], ['Maturity ×', r.model.m_maturity, 1.2],
+    ['Chain ×', r.model.m_chain, 1.2], ['Sector ×', r.model.m_sector, 1.2],
+  ]) {
+    const g = document.createElement('div');
+    g.className = 'gauge';
+    g.innerHTML = '<div class="lab"><span></span><span></span></div><div class="lane"><div class="pour"></div></div>';
+    g.firstChild.firstChild.textContent = label + ' (growth signal ' + (r.model.growth_pct ?? 0).toFixed(1) + '%)';
+    g.firstChild.lastChild.textContent = v.toFixed(3);
+    g.querySelector('.pour').style.width = Math.min(100, (v / top) * 100) + '%';
+    body.append(g);
   }
-  const steps = document.createElement('div'); steps.className = 'steps';
-  steps.innerHTML = '<h3>Farm plan</h3>';
+
+  const plan = document.createElement('div');
+  plan.className = 'plan';
+  plan.innerHTML = '<h3>Farm plan — how to act on this rank</h3>';
   r.farm_steps.forEach((s, i) => {
-    const div = document.createElement('div'); div.className = 'step';
-    div.innerHTML = `<div class="n">${i + 1}</div><div class="st"></div>`;
+    const m = document.createElement('div');
+    m.className = 'move';
+    m.innerHTML = '<div class="no"></div><div class="tx"></div>';
+    m.firstChild.textContent = String(i + 1);
     const [head, ...rest] = s.split('. Cost: ');
-    div.querySelector('.st').textContent = head + '.';
-    const small = document.createElement('small');
-    small.textContent = rest.length ? 'Cost: ' + rest.join('. Cost: ') : '';
-    div.querySelector('.st').append(small);
-    steps.append(div);
+    m.lastChild.textContent = head + '.';
+    if (rest.length) {
+      const small = document.createElement('small');
+      small.textContent = 'Cost: ' + rest.join('. Cost: ');
+      m.lastChild.append(small);
+    }
+    plan.append(m);
   });
-  $('d-body').append(steps);
-  const drawer = $('drawer');
-  drawer.classList.remove('hidden');
-  drawer.setAttribute('aria-hidden', 'false');
+  body.append(plan);
+
+  const card = $('card');
+  card.classList.remove('off');
+  card.classList.add('on');
 }
 
-function renderMethod() {
-  const sectors = '';
-  $('method').innerHTML = `
-    <h2>What this board is</h2>
-    <p>Every protocol in the sealed snapshot that records no token — no market cap, no CoinGecko id, no symbol — and is not a versioned pool or an exchange, ranked by what its launch would be worth if the protocol's record stayed as it is. The watchlist is the floor, never the ceiling: the board also ranks the strongest pre-token protocols below the $${fmtM(RADAR.floor_usd).slice(1)} floor.</p>
-    <h2>The model</h2>
-    <p><code>implied = TVL × base × growth × maturity × chains × sector</code></p>
-    <ul>
-      <li><strong>base = TVL × ${model.base_multiple}</strong> — a launch read off capital already committed.</li>
-      <li><strong>growth</strong> — the 7-day TVL change, clamped to [−60%, +120%], weighted ${model.growth_weight}.</li>
-      <li><strong>maturity</strong> — 0.6 to 1.0 over three years of age; age unknown reads as one year.</li>
-      <li><strong>chains</strong> — +4% per extra chain beyond the first, capped at six: multi-chain reach widens a launch.</li>
-      <li><strong>sector</strong> — the category's fee multiple: lending 1.15, perps and options 1.12, DEX/RWA/oracle/ZK 1.10, bridges and games 0.95.</li>
-    </ul>
-    ${sectors ? `<h2>Sector reasoning</h2><p>${sectors}</p>` : ''}
-    <h2>What it is not</h2>
-    <p>The board does not predict whether or when a token is issued. "Records no token" is DefiLlama's record, not proof a token is absent. The implied value is this radar's own claim, never make.fun's.</p>
-    <h2>How to read it</h2>
-    <p>Start at rank 1, open a row, and read its farm plan: each step carries a cost and a time. The sandbox above re-scores the whole board live when you move a slider — the ranking you see is the ranking you would get with your own weights.</p>`;
+function closeCard() {
+  $('card').classList.remove('on');
+  $('card').classList.add('off');
+  openSlug = null;
 }
 
-function bindSandbox() {
-  const sliders = [['s-base', 'o-base', 'base_multiple'], ['s-growth', 'o-growth', 'growth_weight'], ['s-chain', 'o-chain', 'chain_weight']];
-  for (const [sid, oid, key] of sliders) {
-    const el = $(sid);
-    el.value = model[key];
-    $(oid).textContent = (+model[key]).toFixed(2);
-    el.addEventListener('input', () => {
-      model[key] = +el.value;
-      $(oid).textContent = (+el.value).toFixed(2);
-      $('mformula').textContent = `implied = TVL × ${model.base_multiple} × growth × maturity × chains × sector`;
-      renderRows();
-      if (openSlug) openDetail(openSlug);
-    });
+function renderModelDoc() {
+  const c = R.consts;
+  const rows = [
+    ['fdv_multiple', c.fdv_multiple, 'A launch is read off capital already committed: TVL × 0.25.'],
+    ['growth clamp', c.growth_min + '% … +' + c.growth_max + '%', 'The 7-day TVL move is clamped here before weighting.'],
+    ['growth_weight', c.growth_weight, 'How much of the clamped move flows into the multiple.'],
+    ['maturity', c.maturity_base + ' → ' + (c.maturity_base + c.maturity_bonus) + ' over ' + c.maturity_span + ' days', 'Young protocols score lower on the launch read.'],
+    ['age_default', c.age_default + ' days', 'The age assumed when listed_at is missing.'],
+    ['chain', '+' + c.chain_step + ' per extra chain, capped at ' + c.chain_max, 'Multi-chain reach widens a launch.'],
+  ];
+  const tbl = document.createElement('table');
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr><th>Constant</th><th>Value</th><th>Meaning</th></tr>';
+  tbl.append(thead);
+  const tb = document.createElement('tbody');
+  for (const [k, v, why] of rows) {
+    const tr = document.createElement('tr');
+    tr.append(td(k), td(String(v)), td(why));
+    tb.append(tr);
   }
-  $('s-reset').addEventListener('click', () => {
-    model = { ...RADAR.model };
-    for (const [sid, oid, key] of sliders) { $(sid).value = model[key]; $(oid).textContent = (+model[key]).toFixed(2); }
-    renderRows();
-    if (openSlug) openDetail(openSlug);
-  });
+  tbl.append(tb);
+
+  const sectors = Object.entries(R.sectors).sort((a, b) => b[1] - a[1]);
+  const stbl = document.createElement('table');
+  const sth = document.createElement('thead');
+  sth.innerHTML = '<tr><th>Category</th><th class="r">Sector ×</th></tr>';
+  stbl.append(sth);
+  const stb = document.createElement('tbody');
+  for (const [k, v] of sectors) {
+    const tr = document.createElement('tr');
+    tr.append(td(k), td(v.toFixed(2), 'r'));
+    stb.append(tr);
+  }
+  stbl.append(stb);
+
+  const doc = $('model-doc');
+  doc.textContent = '';
+  const h = (t) => { const el = document.createElement('h2'); el.textContent = t; return el; };
+  const p = (t) => { const el = document.createElement('p'); el.textContent = t; return el; };
+
+  doc.append(h('What this board is'));
+  doc.append(p('Every protocol in the sealed snapshot whose record shows no token — no market cap, no CoinGecko id, no symbol — and that is not a versioned pool or an exchange. It ranks them by what a launch would read if the protocol stayed exactly as recorded, then hands the reader a farm plan per protocol.'));
+  doc.append(h('The model'));
+  const f = document.createElement('p');
+  f.innerHTML = '<code>implied = TVL × FDV_MULTIPLE × growth × maturity × chain × sector</code>';
+  doc.append(f, tbl);
+  doc.append(h('Sector multipliers'));
+  doc.append(p('Each category carries a fee-structure multiple — cash-flow-rich sectors (lending, perps, options) score above 1; bridges and games, where fee capture is weakest, score below. The table covers every category in the snapshot; anything unlisted reads 1.0.'));
+  doc.append(stbl);
+  doc.append(h('What the board is not'));
+  doc.append(p('It does not predict whether or when a token comes. "Records no token" is DefiLlama\'s record, not proof one is absent — pre-launches are excluded the moment any token field fills in. The implied value is this radar\'s own claim, never make.fun\'s, never a market price.'));
+  doc.append(h('How to use it'));
+  doc.append(p('Start at rank 1. Open the row: the gauges show which factor carried the claim, and the farm plan turns the rank into concrete steps, each with a cost and a time. Protocols already trading sit on the Live tokens tab at market values, kept apart from the model\'s rankings.'));
+}
+
+function fillFilters() {
+  const cats = [...new Set(R.rows.map((r) => r.category).filter(Boolean))].sort();
+  for (const c of cats) { const o = document.createElement('option'); o.value = c; o.textContent = c; $('pick-cat').append(o); }
+  const chains = [...new Set(R.rows.flatMap((r) => r.chains))].sort();
+  for (const c of chains) { const o = document.createElement('option'); o.value = c; o.textContent = c; $('pick-chain').append(o); }
 }
 
 function bind() {
@@ -209,34 +251,29 @@ function bind() {
     b.addEventListener('click', () => {
       for (const t of document.querySelectorAll('.tab')) t.classList.remove('active');
       b.classList.add('active');
-      for (const v of document.querySelectorAll('.view')) v.classList.add('hidden');
-      $('view-' + b.dataset.tab).classList.remove('hidden');
+      for (const v of document.querySelectorAll('.pane')) v.classList.remove('show');
+      $('pane-' + b.dataset.tab).classList.add('show');
     });
   }
-  for (const id of ['q', 'f-cat', 'f-chain', 'f-watch']) $(id).addEventListener('input', renderRows);
+  for (const id of ['search', 'pick-cat', 'pick-chain', 'pick-tier']) {
+    $(id).addEventListener('input', renderBoard);
+  }
   for (const th of document.querySelectorAll('#board thead th')) {
     th.addEventListener('click', () => {
       const k = th.dataset.k;
-      if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = k === 'rank' ? 1 : -1; }
-      renderRows();
+      if (!k) return;
+      if (sortK === k) sortD = -sortD;
+      else { sortK = k; sortD = k === 'rank' ? 1 : -1; }
+      renderBoard();
     });
   }
-  $('d-close').addEventListener('click', () => { $('drawer').classList.add('hidden'); openSlug = null; });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('drawer').classList.add('hidden'); openSlug = null; } });
+  $('c-close').addEventListener('click', closeCard);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCard(); });
 }
 
-function fillFilters() {
-  const cats = [...new Set(RADAR.rows.map((r) => r.category).filter(Boolean))].sort();
-  for (const c of cats) { const o = document.createElement('option'); o.value = c; o.textContent = c; $('f-cat').append(o); }
-  const chains = [...new Set(RADAR.rows.flatMap((r) => r.chains))].sort();
-  for (const c of chains) { const o = document.createElement('option'); o.value = c; o.textContent = c; $('f-chain').append(o); }
-}
-
-renderMeta();
 fillFilters();
-bindSandbox();
 bind();
-renderRows();
+renderHeadline();
+renderBoard();
 renderLive();
-renderMethod();
-
+renderModelDoc();
