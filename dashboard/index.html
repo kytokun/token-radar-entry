@@ -24,9 +24,12 @@
   <span class="strip-right" id="strip-asof"></span>
 </div>
 
+<div class="integrity" id="integrity"></div>
+
 <nav class="tabs">
   <button class="tab active" data-tab="board">Board</button>
   <button class="tab" data-tab="live">Live tokens</button>
+  <button class="tab" data-tab="excluded">Excluded</button>
   <button class="tab" data-tab="model">The model</button>
 </nav>
 
@@ -52,6 +55,8 @@
         <th data-k="change_7d" class="r">7d</th>
         <th data-k="age_days" class="r">Tracked</th>
         <th data-k="implied_value_usd" class="r">Implied value</th>
+        <th data-k="verdict_usd_per_hour" class="r">Verdict $/h</th>
+        <th data-k="p_launch" class="r">P(launch)</th>
       </tr></thead>
       <tbody id="board-body"></tbody>
     </table>
@@ -67,6 +72,16 @@
     <table>
       <thead><tr><th>#</th><th>Protocol</th><th>Category</th><th class="r">TVL</th><th class="r">Market cap</th><th class="r">MCap/TVL</th><th class="r">7d</th></tr></thead>
       <tbody id="live-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="pane-excluded" class="pane">
+  <p class="note" id="excl-note"></p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>#</th><th>Protocol</th><th>Class</th><th>Why it is here, not on a board</th><th class="r">TVL</th></tr></thead>
+      <tbody id="excl-body"></tbody>
     </table>
   </div>
 </section>

@@ -34,12 +34,30 @@ function td(txt, cls) {
 function renderHeadline() {
   $('headline').innerHTML =
     `Snapshot <b>${R.as_of}</b> · floor <b>${money(R.floor_usd)}</b><br>` +
-    `<b>${R.counts.watchlist}</b> watchlist · <b>${R.counts.early}</b> early · <b>${R.counts.live}</b> live set aside`;
+    `<b>${R.counts.total}</b> protocols accounted for: <b>${R.counts.board}</b> board · ` +
+    `<b>${R.counts.live}</b> live · <b>${R.counts.excluded}</b> excluded — nothing dropped`;
   $('strip-version').textContent = R.model_version;
   $('strip-formula').textContent = 'implied = TVL × ' + R.consts.fdv_multiple +
     ' × growth × maturity × chain × sector';
-  $('strip-asof').textContent = 'floor $' + Math.round(R.floor_usd / 1e6) + 'M TVL · ' + R.counts.board + ' ranked';
+  $('strip-asof').textContent = R.counts.total + ' = ' + R.counts.board + ' board + ' +
+    R.counts.live + ' live + ' + R.counts.excluded + ' excluded';
   $('g-asof').textContent = R.as_of;
+}
+
+function renderIntegrity() {
+  const wrap = $('integrity');
+  wrap.textContent = '';
+  const label = document.createElement('span');
+  label.className = 'integrity-label';
+  label.textContent = R.self_test.length + '-check self-test';
+  wrap.append(label);
+  for (const c of R.self_test) {
+    const b = document.createElement('span');
+    b.className = 'chk ' + (c.pass ? 'pass' : 'fail');
+    b.textContent = (c.pass ? '✓ ' : '✗ ') + c.name;
+    b.title = c.name;
+    wrap.append(b);
+  }
 }
 
 function visibleRows() {
@@ -87,6 +105,8 @@ function renderBoard() {
     tr.append(ch);
     tr.append(td(ageTxt(r.age_days), 'r'));
     tr.append(td(money(r.implied_value_usd), 'iv'));
+    tr.append(td(money(r.verdict_usd_per_hour) + '/h', 'iv'));
+    tr.append(td((r.p_launch * 100).toFixed(0) + '%', 'r'));
     tr.addEventListener('click', () => openCard(r.slug));
     body.append(tr);
   }
@@ -103,7 +123,7 @@ function renderLive() {
     const name = document.createElement('td');
     name.className = 'proto';
     name.append(r.name, document.createElement('small'));
-    name.lastChild.textContent = r.symbol ?? r.slug;
+    name.lastChild.textContent = r.slug;
     name.append(tag('already trading', false, 'pt live'));
     tr.append(name);
     const cat = document.createElement('td');
@@ -132,6 +152,8 @@ function openCard(slug) {
   for (const [k, v] of [
     ['Rank', '#' + r.rank], ['TVL', money(r.tvl_usd)], ['7d change', pct(r.change_7d)],
     ['Tracked', ageTxt(r.age_days)], ['Implied value', money(r.implied_value_usd)],
+    ['Farm verdict', money(r.verdict_usd_per_hour) + '/h — implied × ' + (r.airdrop_share * 100).toFixed(0) + '% share ÷ ' + r.est_hours + ' plan hours'],
+    ['P(launch ever)', (r.p_launch * 100).toFixed(0) + '% — 0.85 − 0.10 × [age < 90d] + 0.05 × [TVL > median]'],
     ['Tier', r.tier === 'watchlist' ? 'watchlist' : 'early radar'],
     ['Status', 'pre-token — records no token in the snapshot'],
   ]) {
@@ -187,6 +209,30 @@ function closeCard() {
   openSlug = null;
 }
 
+function renderExcluded() {
+  const cls = (c) => tag(c, false, 'excl');
+  const body = $('excl-body');
+  body.textContent = '';
+  R.excluded.forEach((e, i) => {
+    const tr = document.createElement('tr');
+    tr.style.cursor = 'default';
+    tr.append(td(String(i + 1), 'r'));
+    const name = document.createElement('td');
+    name.className = 'proto';
+    name.append(e.name, document.createElement('small'));
+    name.lastChild.textContent = e.slug;
+    tr.append(name);
+    tr.append((() => { const c = document.createElement('td'); c.append(cls(e.cls)); return c; })());
+    tr.append(td(e.reason));
+    tr.append(td(money(e.tvl_usd), 'r'));
+    body.append(tr);
+  });
+  const parts = Object.entries(R.excl_counts).filter(([, n]) => n > 0).map(([c, n]) => n + ' ' + c);
+  $('excl-note').textContent = 'Every protocol that is neither ranked nor live, by class: ' +
+    parts.join(', ') + ' — ' + R.excluded.length + ' total. ' +
+    Object.entries(R.excl_counts).filter(([, n]) => n > 0).map(([c]) => c + ': ' + R.excl_reasons[c]).join(' ');
+}
+
 function renderMethodo() {
   const m = R.methodology;
   const box = $('methodo');
@@ -209,6 +255,30 @@ function renderMethodo() {
     stats.append(s);
   }
   box.append(stats);
+  const extra = document.createElement('div');
+  extra.className = 'mstats';
+  for (const [big, small] of [
+    ['verdict $/h', m.verdict_formula],
+    ['hours rule', m.hours_rule],
+    ['odds rule', m.odds_rule],
+  ]) {
+    const s = document.createElement('div');
+    s.className = 'stat';
+    s.innerHTML = '<b></b><span></span>';
+    s.firstChild.textContent = big;
+    s.lastChild.textContent = small;
+    extra.append(s);
+  }
+  box.append(extra);
+  const shares = document.createElement('p');
+  shares.className = 'mnote';
+  const shareTxt = Object.entries(R.airdrop_share)
+    .sort((a, b) => b[1].share - a[1].share)
+    .map(([k, v]) => k + ' ' + (v.share * 100).toFixed(0) + '%')
+    .join(' · ');
+  shares.textContent = 'Airdrop shares are hand-set constants, never fitted to anything: ' + shareTxt +
+    '. Anything unlisted reads ' + (R.airdrop_share._default.share * 100).toFixed(0) + '%.';
+  box.append(shares);
   const p = document.createElement('p');
   p.className = 'mnote';
   p.textContent = 'Every factor is read off the snapshot record — TVL, 7-day change, days tracked without a token, chains, category. No name is special-cased; one function scores all ' + R.counts.board + ' rows.';
@@ -256,7 +326,7 @@ function renderModelDoc() {
   const p = (t) => { const el = document.createElement('p'); el.textContent = t; return el; };
 
   doc.append(h('What this board is'));
-  doc.append(p('Every protocol in the sealed snapshot whose record shows no token — no market cap, no CoinGecko id, no symbol — and that is not a versioned pool or an exchange. It ranks them by what a launch would read if the protocol stayed exactly as recorded, then hands the reader a farm plan per protocol.'));
+  doc.append(p('Every one of the ' + R.counts.total + ' protocols in the sealed snapshot is accounted for: ' + R.counts.board + ' rank here (no token in the record, not a versioned pool, not an exchange), ' + R.counts.live + ' already trade on the Live tokens tab at market values, and ' + R.counts.excluded + ' sit on the Excluded tab with a one-sentence reason per class. The strip above the board re-runs the ' + R.self_test.length + '-check self-test every load — ranks descending, watchlist covered, verdicts positive, 758 counted exactly once.'));
   doc.append(h('The model'));
   const f = document.createElement('p');
   f.innerHTML = '<code>implied = TVL × FDV_MULTIPLE × growth × maturity × chain × sector</code>';
@@ -264,6 +334,10 @@ function renderModelDoc() {
   doc.append(h('Sector multipliers'));
   doc.append(p('Each category carries a fee-structure multiple — cash-flow-rich sectors (lending, perps, options) score above 1; bridges and games, where fee capture is weakest, score below. The table covers every category in the snapshot; anything unlisted reads 1.0.'));
   doc.append(stbl);
+  doc.append(h('Net-per-hour verdict'));
+  doc.append(p('Every row carries a verdict in dollars per hour: implied value × the category airdrop share ÷ the total hours the farm plan asks for. The shares are hand-set constants, never fitted to anything — perps and dexes 12%, lending and CDPs 10%, restaking and liquid staking 8%, bridges and infra 7%, RWA and stables 5%, anything unlisted 6%. The hours come from re-summing each step\'s own Time line: one-time minutes count once, weekly minutes multiply by the hold, and a hold of N weeks reads N hours — holding capital is not active work.'));
+  doc.append(h('Launch odds'));
+  doc.append(p('P(launch ever) = 0.85 − 0.10 × [age under 90 days] + 0.05 × [TVL above the board median], clamped to 5–95%. It is a rule, not a fit: every row\'s number re-computes from the snapshot, and the base rate is the honest read that most protocols in this TVL class do eventually ship a token.'));
   doc.append(h('What the board is not'));
   doc.append(p('It does not predict whether or when a token comes. "Records no token" is DefiLlama\'s record, not proof one is absent — pre-launches are excluded the moment any token field fills in. The implied value is this radar\'s own claim, never make.fun\'s, never a market price.'));
   doc.append(h('How to use it'));
@@ -305,7 +379,9 @@ function bind() {
 fillFilters();
 bind();
 renderHeadline();
+renderIntegrity();
 renderBoard();
 renderLive();
+renderExcluded();
 renderMethodo();
 renderModelDoc();
