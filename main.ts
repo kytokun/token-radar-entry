@@ -93,7 +93,9 @@ writeFileSync(join(outDir, 'dossier.json'), buildDossier(outDir, { text_max_byte
 const kb = (n: number) => `${Math.round(n / 1024)} KB`;
 process.stdout.write(
   `radar: ${snap!.protocols.length} protocols read, ${snap!.watchlist.length} watchlist, ` +
-    `${board.length} board rows (${data.counts.early} early), ${data.counts.live} live set aside\n` +
+    `${board.length} board rows (${data.counts.early} early), ${data.counts.live} live, ` +
+    `${data.counts.excluded} excluded — ${data.counts.total} accounted for\n` +
+    `radar: self-test ${data.self_test.filter((c) => c.pass).length}/${data.self_test.length} checks pass\n` +
     `radar: board.json ${kb(statSync(join(outDir, 'board.json')).size)}, ` +
     `data.js ${kb(statSync(join(outDir, 'data.js')).size)}, dashboard/ ${pageFiles.length} files, ` +
     `screenshots/ ${shots.length}, dossier.json ${kb(statSync(join(outDir, 'dossier.json')).size)}\n`,
